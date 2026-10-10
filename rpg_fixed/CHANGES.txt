@@ -1,0 +1,27 @@
+BUILD:  g++ -std=c++14 -Wall *.cpp -o rpg      (any C++14 or newer; add all .cpp files in an IDE)
+
+NEW FILES (were missing): Weapon.h, Armor.h, Spell.h, Range.h, Random.h
+RENAMED: InputValidation.h -> InputHelper.h (the code includes "InputHelper.h")
+  -> If you already have your own Random/Range/Armor/Spell files, keep yours and delete mine.
+
+BUG FIXES
+- Player::createClass: removed the extra cin.ignore (name needed Enter twice)
+- Store: Bahamut's Soul never set mDamageRange, so equipping it zeroed your damage
+- Thief had 0 MP but a 10 MP spell (could never cast); now 10 MP. "Poltergiest" -> "Poltergeist"
+- Player::attack: not enough MP / empty item slot now re-prompts instead of giving the monster a free hit
+- Player::buying: uses Item::clone() instead of hard-coding new PotionItem/AttackItem
+- main: Rest did nothing when the ambush roll found no monster; now you rest unless ambushed
+- Player started at level 0 and "leveled up" on the first win; now starts at level 1
+- levelUp handles gaining multiple levels from one fight
+- Monster HP no longer goes negative
+- getValidInt exits cleanly at end-of-input instead of looping forever
+- Shop farewell said "Traveller"; now says Merlin's Surplus
+- Map prints where the shop is
+
+BALANCE TWEAKS (easy to revert)
+- Dragonborn armor +30 -> +3 (+30 made monsters unable to ever hurt you)
+- Thief spell 20-50 dmg -> 10-25 dmg
+
+NOT CHANGED ON PURPOSE (these are your live-demo refactors):
+- Player/Monster duplication (-> Character base class)
+- Monster has no subclasses and no virtual destructor yet

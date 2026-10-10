@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Merlin's Surplus</title>
+<style>
+:root{--bg:#171528;--panel:#221f3a;--line:#38335c;--text:#ebe7f6;--dim:#9a94b8;--gold:#e0ac47;--hp:#cf4a55;--mp:#4f8fe0;--xp:#5db07c}
+@media (prefers-color-scheme:light){:root{--bg:#f1eef8;--panel:#fff;--line:#d5cfe8;--text:#221f3a;--dim:#6d6788;--gold:#a8710f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--line)}
+h1{margin:0;font:700 24px Palatino,"Palatino Linotype",Georgia,serif;color:var(--gold)}
+main{flex:1;min-height:0;display:grid;grid-template-columns:1fr 320px;gap:16px;padding:16px 20px}
+@media(max-width:800px){main{grid-template-columns:1fr;overflow:auto}}
+.col{display:flex;flex-direction:column;min-height:0;gap:12px}
+#log{flex:1;min-height:200px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;font:19px/1.55 Palatino,Georgia,serif}
+#log div{margin:0}
+.you{color:var(--gold);margin-top:8px!important}.head{color:var(--gold);font-weight:700;margin-top:10px!important}
+.good{color:var(--xp)}.bad{color:var(--hp)}.dim{color:var(--dim)}
+#actions{display:flex;flex-wrap:wrap;gap:8px}
+button{font:600 17px system-ui;padding:10px 16px;border-radius:6px;border:1px solid var(--gold);background:transparent;color:var(--text);cursor:pointer}
+button:hover{background:var(--gold);color:#171528}
+button:focus-visible,input:focus-visible{outline:3px solid var(--mp);outline-offset:2px}
+button kbd{font:inherit;color:var(--dim);margin-right:8px}button:hover kbd{color:inherit}
+input{font:17px system-ui;padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--text);min-width:240px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card h2{margin:0 0 6px;font:700 17px Palatino,Georgia,serif}
+.sub{color:var(--dim);font-size:14px}
+.bar{height:10px;border-radius:5px;background:var(--line);margin:3px 0 8px;overflow:hidden}.bar i{display:block;height:100%;transition:width .3s}
+.row{display:flex;justify-content:space-between;font-size:14px}
+#map{display:grid;grid-template-columns:repeat(9,1fr);gap:2px;margin-top:6px}
+#map b{aspect-ratio:1;border-radius:3px;background:var(--line);display:grid;place-items:center;font-size:12px}
+#map .me{background:var(--gold);color:#171528}#map .shop{background:var(--mp);color:#fff}
+aside{overflow:auto}
+</style>
+</head>
+<body>
+<header><h1>Merlin's Surplus</h1><button id="restart">New game</button></header>
+<main>
+  <div class="col">
+    <div id="log" aria-live="polite"></div>
+    <div id="actions"></div>
+  </div>
+  <aside class="col">
+    <div class="card" id="hero"></div>
+    <div class="card" id="mon" hidden></div>
+    <div class="card"><h2>Map</h2><div class="sub" id="pos"></div><div id="map"></div></div>
+    <div class="card" id="gear"></div>
+  </aside>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let lines, partial, blockStart, S, mon, pos, over;
+function reset() { lines = []; partial = ''; blockStart = 0; S = {}; mon = null; pos = [0, 0]; over = false; }
+reset();
+
+const es = new EventSource('/events');
+es.onopen = () => { reset(); render(); };      // server replays history after (re)connect
+es.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.t === 'reset') reset();
+  else if (m.t === 'out') feed(m.d);
+  else if (m.t === 'err') lines.push('! ' + m.d);
+  else if (m.t === 'exit') { over = true; partial = ''; lines.push('— Game ended. Press "New game" to play again. —'); }
+  render();
+};
+
+function feed(d) {
+  const t = (partial + d).replace(/\r/g, '').split('\n');
+  partial = t.pop();
+  t.forEach(l => { lines.push(l); scan(l); });
+}
+
+function scan(l) {
+  let m;
+  if ((m = l.match(/^(.+)'s HP = (\d+), MP = (\d+)/))) { S.name = m[1]; S.hp = +m[2]; S.mp = +m[3]; S.maxHp = Math.max(S.maxHp || 0, S.hp); S.maxMp = Math.max(S.maxMp || 0, S.mp); }
+  else if ((m = l.match(/^(.+)'s HP = (\d+)$/))) mon = { name: m[1], hp: +m[2], max: Math.max(mon && mon.name === m[1] ? mon.max : 0, +m[2]) };
+  else if ((m = l.match(/You encountered an? (.+)!/))) mon = { name: m[1], hp: null, max: 0 };
+  else if (/^Victory|safely ran away|You died/.test(l)) mon = null;
+  else if ((m = l.match(/Player Position = \((-?\d+), (-?\d+)\)/))) pos = [+m[1], +m[2]];
+  else if ((m = l.match(/Name: (.+?) \| Class: (.+?) \| Race: (.+)/))) { S.name = m[1]; S.cls = m[2]; S.race = m[3]; }
+  else if ((m = l.match(/HP: (\d+)\/(\d+) \| MP: (\d+)\/(\d+)/))) { S.hp = +m[1]; S.maxHp = +m[2]; S.mp = +m[3]; S.maxMp = +m[4]; }
+  else if ((m = l.match(/Armor: (\d+) \| Gold: (\d+) \| Level: (\d+) \| XP: (\d+)/))) { S.armor = +m[1]; S.gold = +m[2]; S.lvl = +m[3]; S.xp = +m[4]; }
+  else if ((m = l.match(/^Weapon: (.+)/))) S.weapon = m[1];
+  else if ((m = l.match(/^Slot (\d): (.+)/))) (S.slots = S.slots || [])[m[1] - 1] = m[2];
+  else if ((m = l.match(/Current Gold: (\d+)/))) S.gold = +m[1];
+}
+
+// Turn the game's current prompt into clickable choices.
+function options() {
+  const rx = /(?:^|\|\||\s)\[(\d+)\]\s+(.+?)(?=\s*\|\||\s*$)/g;
+  const grab = s => [...s.matchAll(rx)].map(m => ({ n: m[1], label: m[2].replace(/[=:\s]+$/, '') }));
+  let o = grab(partial);
+  if (!o.length) {                                   // multi-line menu: collect the last contiguous block of "[n] ..." lines
+    const blk = lines.slice(blockStart).filter(l => typeof l === 'string');
+    for (let i = blk.length - 1, got = false; i >= 0; i--) {
+      const g = grab(blk[i]);
+      if (g.length) { o = g.concat(o); got = true; } else if (got) break;
+    }
+  }
+  if (o.length) return { type: 'pick', o };
+  if (/name:/i.test(partial)) return { type: 'text' };
+  if (/Press '1'/.test(partial)) return { type: 'pick', o: [{ n: 1, label: 'Continue' }] };
+  const r = partial.match(/\[(\d+)-(\d+)\]/);
+  if (r) return { type: 'pick', o: Array.from({ length: r[2] - r[1] + 1 }, (_, i) => ({ n: +r[1] + i, label: '' })) };
+  return null;
+}
+
+function send(val, label) {
+  if (over) return;
+  lines.push({ you: label || val });
+  blockStart = lines.length; partial = '';
+  fetch('/input', { method: 'POST', body: String(val) });
+  render();
+}
+
+function cls(l) {
+  if (/^You are hit|You died|GAME OVER|failed to|missed|miss!|Not enough|full|could not/.test(l)) return 'bad';
+  if (/^Victory|Level Up|You hit|You cast|Cast |Purchased|Equipped|Sold|safely/.test(l)) return 'good';
+  return '';
+}
+
+function render() {
+  const log = $('log'), stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  log.innerHTML = lines.map(l => {
+    if (typeof l !== 'string') return `<div class="you">› ${esc(l.you)}</div>`;
+    if (/^[=\-\s]*$/.test(l)) return l.trim() ? '' : '<div>&nbsp;</div>';
+    if (/^=+/.test(l)) return `<div class="head">${esc(l.replace(/^=+\s*|\s*=+$/g, ''))}</div>`;
+    return `<div class="${cls(l)}">${esc(l)}</div>`;
+  }).join('') + (partial ? `<div class="dim">${esc(partial)}</div>` : '');
+  if (stick) log.scrollTop = log.scrollHeight;
+
+  const a = $('actions'), op = over ? null : options();
+  a.innerHTML = '';
+  if (op && op.type === 'pick') op.o.forEach(x => {
+    const b = document.createElement('button');
+    b.innerHTML = `<kbd>${x.n}</kbd>${esc(x.label)}`;
+    b.onclick = () => send(x.n, x.label || x.n);
+    a.append(b);
+  });
+  if (op && op.type === 'text') {
+    a.innerHTML = '<input id="nm" placeholder="Hero name" maxlength="24" autofocus><button id="go">Begin</button>';
+    const go = () => { const v = $('nm').value.trim(); send(v || ' ', v || 'Hero'); };
+    $('go').onclick = go; $('nm').onkeydown = e => e.key === 'Enter' && go();
+    $('nm').focus();
+  }
+  side();
+}
+
+function bar(label, v, max, color) {
+  if (v == null) return '';
+  return `<div class="row"><span>${label}</span><span>${v}${max ? ' / ' + max : ''}</span></div><div class="bar"><i style="width:${max ? Math.min(100, v / max * 100) : 0}%;background:${color}"></i></div>`;
+}
+
+function side() {
+  $('hero').innerHTML = `<h2>${esc(S.name || 'Adventurer')}</h2><div class="sub">${esc([S.race, S.cls, S.lvl && 'Level ' + S.lvl].filter(Boolean).join(' ') || 'Not created yet')}</div>`
+    + bar('HP', S.hp, S.maxHp, 'var(--hp)') + bar('MP', S.mp, S.maxMp, 'var(--mp)')
+    + (S.gold != null ? `<div class="row"><span>Gold ${S.gold}</span><span>Armor ${S.armor ?? '—'}</span><span>XP ${S.xp ?? '—'}</span></div>` : '');
+  const mc = $('mon'); mc.hidden = !mon;
+  if (mon) mc.innerHTML = `<h2>${esc(mon.name)}</h2>` + (mon.hp != null ? bar('HP', mon.hp, mon.max, 'var(--hp)') : '');
+  $('pos').textContent = `Position (${pos[0]}, ${pos[1]}) · Shop at (2, 4)`;
+  let g = '';
+  for (let r = 3; r >= -3; r--) for (let c = -4; c <= 4; c++) {
+    const x = pos[0] + c, y = pos[1] + r;
+    g += `<b class="${c === 0 && r === 0 ? 'me' : x === 2 && y === 4 ? 'shop' : ''}">${c === 0 && r === 0 ? '★' : x === 2 && y === 4 ? '$' : ''}</b>`;
+  }
+  $('map').innerHTML = g;
+  $('gear').innerHTML = `<h2>Gear</h2><div class="sub">Weapon: ${esc(S.weapon || '—')}</div><div class="sub">Slot 1: ${esc((S.slots || [])[0] || '—')}</div><div class="sub">Slot 2: ${esc((S.slots || [])[1] || '—')}</div><div class="sub">Gear updates when you open View Stats.</div>`;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.ctrlKey || e.metaKey) return;
+  const b = [...document.querySelectorAll('#actions button')].find(x => x.firstChild && x.firstChild.textContent === e.key);
+  if (b) b.click();
+});
+$('restart').onclick = () => fetch('/restart', { method: 'POST' });
+render();
+</script>
+</body>
+</html>
